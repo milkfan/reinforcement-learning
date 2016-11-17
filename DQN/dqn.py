@@ -9,10 +9,11 @@ import tensorflow as tf
 if "../" not in sys.path:
   sys.path.append("../")
 
+from lib.atari import helpers as atari_helpers
 from lib import plotting
 from collections import deque, namedtuple
 
-env = gym.envs.make("Breakout-v0")
+env = atari_helpers.AtariEnvWrapper(gym.envs.make("Breakout-v0"))
 
 # Atari Actions: 0 (noop), 1 (fire), 2 (left) and 3 (right) are valid actions
 VALID_ACTIONS = [0, 1, 2, 3]
@@ -302,10 +303,14 @@ def deep_q_learning(sess,
         saver.save(tf.get_default_session(), checkpoint_path)
 
         # Reset the environment
-        state = env.reset()
-        state = state_processor.process(sess, state)
-        state = np.stack([state] * 4, axis=2)
-        loss = None
+        try:
+            state = env.reset()
+            state = state_processor.process(sess, state)
+            state = np.stack([state] * 4, axis=2)
+            loss = None
+        except:
+            # Episode isn't really over, we just lost a life
+            pass
 
         # One step in the environment
         for t in itertools.count():
@@ -361,11 +366,11 @@ def deep_q_learning(sess,
             states_batch = np.array(states_batch)
             loss = q_estimator.update(sess, states_batch, action_batch, targets_batch)
 
-            if done:
-                break
-
             state = next_state
             total_t += 1
+
+            if done:
+                break
 
         # Add summaries to tensorboard
         episode_summary = tf.Summary()
