@@ -89,6 +89,12 @@ class Estimator():
         # Fully connected layers
         flattened = tf.contrib.layers.flatten(conv3)
         fc1 = tf.contrib.layers.fully_connected(flattened, 512)
+        fc1 = tf.contrib.layers.fully_connected(
+            inputs=flattened,
+            num_outputs=512,
+            activation_fn=tf.nn.relu,
+            biases_initializer=tf.zeros_initializer
+        )
         self.predictions = tf.contrib.layers.fully_connected(fc1, len(VALID_ACTIONS))
 
         # Get the predictions for the chosen actions only
@@ -97,6 +103,7 @@ class Estimator():
 
         # Calcualte the loss
         self.losses = tf.squared_difference(self.y_pl, self.action_predictions)
+
         self.loss = tf.reduce_mean(self.losses)
 
         # Optimizer Parameters from original paper
@@ -198,13 +205,14 @@ def deep_q_learning(sess,
                     state_processor,
                     num_episodes,
                     experiment_dir,
-                    replay_memory_size=500000,
+                    replay_memory_size=1000000,
                     replay_memory_init_size=50000,
                     update_target_estimator_every=10000,
+                    steps_between_updates=4,
                     discount_factor=0.99,
                     epsilon_start=1.0,
                     epsilon_end=0.1,
-                    epsilon_decay_steps=500000,
+                    epsilon_decay_steps=1000000,
                     batch_size=32,
                     record_video_every=50):
     """
@@ -351,20 +359,21 @@ def deep_q_learning(sess,
             stats.episode_rewards[i_episode] += reward
             stats.episode_lengths[i_episode] = t
 
-            # Sample a minibatch from the replay memory
-            samples = random.sample(replay_memory, batch_size)
-            states_batch, action_batch, reward_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
+            if total_t % steps_between_updates == 0:
+                # Sample a minibatch from the replay memory
+                samples = random.sample(replay_memory, batch_size)
+                states_batch, action_batch, reward_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
 
-            # Calculate q values and targets (Double DQN)
-            q_values_next = q_estimator.predict(sess, next_states_batch)
-            best_actions = np.argmax(q_values_next, axis=1)
-            q_values_next_target = target_estimator.predict(sess, next_states_batch)
-            targets_batch = reward_batch + np.invert(done_batch).astype(np.float32) * \
-                discount_factor * q_values_next_target[np.arange(batch_size), best_actions]
+                # Calculate q values and targets (Double DQN)
+                q_values_next = q_estimator.predict(sess, next_states_batch)
+                best_actions = np.argmax(q_values_next, axis=1)
+                q_values_next_target = target_estimator.predict(sess, next_states_batch)
+                targets_batch = reward_batch + np.invert(done_batch).astype(np.float32) * \
+                    discount_factor * q_values_next_target[np.arange(batch_size), best_actions]
 
-            # Perform gradient descent update
-            states_batch = np.array(states_batch)
-            loss = q_estimator.update(sess, states_batch, action_batch, targets_batch)
+                # Perform gradient descent update
+                states_batch = np.array(states_batch)
+                loss = q_estimator.update(sess, states_batch, action_batch, targets_batch)
 
             state = next_state
             total_t += 1
@@ -410,13 +419,14 @@ with tf.Session() as sess:
                                     target_estimator=target_estimator,
                                     state_processor=state_processor,
                                     experiment_dir=experiment_dir,
-                                    num_episodes=10000,
-                                    replay_memory_size=500000,
+                                    num_episodes=500000,
+                                    replay_memory_size=1000000,
                                     replay_memory_init_size=50000,
                                     update_target_estimator_every=10000,
+                                    steps_between_updates=4,
                                     epsilon_start=1.0,
                                     epsilon_end=0.1,
-                                    epsilon_decay_steps=500000,
+                                    epsilon_decay_steps=1000000,
                                     discount_factor=0.99,
                                     batch_size=32):
 
