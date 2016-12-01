@@ -10,6 +10,7 @@ if "../" not in sys.path:
   sys.path.append("../")
 
 from lib.atari import helpers as atari_helpers
+from lib.atari.state_processor import StateProcessor
 from lib import plotting
 from collections import deque, namedtuple
 
@@ -18,30 +19,6 @@ env = atari_helpers.AtariEnvWrapper(gym.envs.make("Breakout-v0"))
 # Atari Actions: 0 (noop), 1 (fire), 2 (left) and 3 (right) are valid actions
 VALID_ACTIONS = [0, 1, 2, 3]
 
-class StateProcessor():
-    """
-    Processes a raw Atari iamges. Resizes it and converts it to grayscale.
-    """
-    def __init__(self):
-        # Build the Tensorflow graph
-        with tf.variable_scope("state_processor"):
-            self.input_state = tf.placeholder(shape=[210, 160, 3], dtype=tf.uint8)
-            self.output = tf.image.rgb_to_grayscale(self.input_state)
-            self.output = tf.image.crop_to_bounding_box(self.output, 34, 0, 160, 160)
-            self.output = tf.image.resize_images(
-                self.output, 84, 84, method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-            self.output = tf.squeeze(self.output)
-
-    def process(self, sess, state):
-        """
-        Args:
-            sess: A Tensorflow session object
-            state: A [210, 160, 3] Atari RGB State
-
-        Returns:
-            A processed [84, 84, 1] state representing grayscale values.
-        """
-        return sess.run(self.output, { self.input_state: state })
 
 class Estimator():
     """Q-Value Estimator neural network.
@@ -128,7 +105,7 @@ class Estimator():
           s: State input of shape [batch_size, 4, 160, 160, 3]
 
         Returns:
-          Tensor of shape [batch_size, NUM_VALID_ACTIONS] containing the estimated 
+          Tensor of shape [batch_size, NUM_VALID_ACTIONS] containing the estimated
           action values.
         """
         return sess.run(self.predictions, { self.X_pl: s })
@@ -228,9 +205,9 @@ def deep_q_learning(sess,
         num_episodes: Number of episodes to run for
         experiment_dir: Directory to save Tensorflow summaries in
         replay_memory_size: Size of the replay memory
-        replay_memory_init_size: Number of random experiences to sampel when initializing 
+        replay_memory_init_size: Number of random experiences to sampel when initializing
           the reply memory.
-        update_target_estimator_every: Copy parameters from the Q estimator to the 
+        update_target_estimator_every: Copy parameters from the Q estimator to the
           target estimator every N steps
         discount_factor: Lambda time discount factor
         epsilon_start: Chance to sample a random action when taking an action.
@@ -353,7 +330,7 @@ def deep_q_learning(sess,
                 replay_memory.pop(0)
 
             # Save transition to replay memory
-            replay_memory.append(Transition(state, action, reward, next_state, done))   
+            replay_memory.append(Transition(state, action, reward, next_state, done))
 
             # Update statistics
             stats.episode_rewards[i_episode] += reward
