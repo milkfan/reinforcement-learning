@@ -282,20 +282,15 @@ def deep_q_learning(sess,
                       resume=True,
                       video_callable=lambda count: count % record_video_every == 0)
 
+    state = env.reset()
+    state = state_processor.process(sess, state)
+    state = np.stack([state] * 4, axis=2)
+    loss = None
+    env.reset()
     for i_episode in range(num_episodes):
 
         # Save the current checkpoint
         saver.save(tf.get_default_session(), checkpoint_path)
-
-        # Reset the environment
-        try:
-            state = env.reset()
-            state = state_processor.process(sess, state)
-            state = np.stack([state] * 4, axis=2)
-            loss = None
-        except:
-            # Episode isn't really over, we just lost a life
-            pass
 
         # One step in the environment
         for t in itertools.count():
@@ -356,7 +351,16 @@ def deep_q_learning(sess,
             total_t += 1
 
             if done:
-                break
+                # Reset the environment
+                try:
+                    state = env.reset()
+                    state = state_processor.process(sess, state)
+                    state = np.stack([state] * 4, axis=2)
+                    loss = None
+                    break
+                except:
+                    # Episode isn't really over, we just lost a life
+                    pass
 
         # Add summaries to tensorboard
         episode_summary = tf.Summary()
