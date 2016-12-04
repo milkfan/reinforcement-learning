@@ -76,6 +76,7 @@ def deep_q_learning(env,
                     replay_memory_size=500000,
                     replay_memory_init_size=50000,
                     update_target_estimator_every=10000,
+                    train_every=4,
                     discount_factor=0.99,
                     epsilon_start=1.0,
                     epsilon_end=0.1,
@@ -98,6 +99,7 @@ def deep_q_learning(env,
           the reply memory.
         update_target_estimator_every: Copy parameters from the Q estimator to the
           target estimator every N steps
+        train_every: How often to train Q network
         discount_factor: Lambda time discount factor
         epsilon_start: Chance to sample a random action when taking an action.
           Epsilon is decayed over time and this is the start value
@@ -130,7 +132,7 @@ def deep_q_learning(env,
     if not os.path.exists(monitor_path):
         os.makedirs(monitor_path)
 
-    total_t = q_network.sess.run(tf.contrib.framework.get_global_step())
+    total_t = 0
 
     # The epsilon decay schedule
     epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
@@ -160,6 +162,8 @@ def deep_q_learning(env,
             state = np.stack([state] * 4, axis=2)
         else:
             state = next_state
+
+        total_t += 1
 
     # Record videos
     env.monitor.start(monitor_path,
@@ -215,25 +219,27 @@ def deep_q_learning(env,
             stats.episode_rewards[i_episode] += reward
             stats.episode_lengths[i_episode] = t
 
-            # Sample a minibatch from the replay memory
-            samples = random.sample(replay_memory, batch_size)
-            states_batch, actions_batch, rewards_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
+            if total_t % train_every == 0:
+                # Sample a minibatch from the replay memory
+                samples = random.sample(replay_memory, batch_size)
+                states_batch, actions_batch, rewards_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
 
-            # Perform gradient descent update
-            states_batch = np.array(states_batch)
-            loss = q_network.train(
-                states_batch,
-                actions_batch,
-                rewards_batch,
-                next_states_batch,
-                done_batch
-            )
+                # Perform gradient descent update
+                states_batch = np.array(states_batch)
+                loss = q_network.train(
+                    states_batch,
+                    actions_batch,
+                    rewards_batch,
+                    next_states_batch,
+                    done_batch
+                )
+
+            total_t += 1
 
             if done:
                 break
 
             state = next_state
-            total_t += 1
 
         # Add summaries to tensorboard
         episode_summary = tf.Summary()
@@ -308,6 +314,7 @@ def main():
                                     replay_memory_size=500000,
                                     replay_memory_init_size=50000,
                                     update_target_estimator_every=10000,
+                                    train_every=4,
                                     epsilon_start=1.0,
                                     epsilon_end=0.1,
                                     epsilon_decay_steps=500000,
