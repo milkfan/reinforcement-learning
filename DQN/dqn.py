@@ -1,5 +1,6 @@
 import argparse
 import gym
+import cv2
 import itertools
 import numpy as np
 import os
@@ -11,39 +12,19 @@ if "../" not in sys.path:
   sys.path.append("../")
 
 from lib import plotting
+from lib.atari.helpers import AtariEnvWrapper
 from lib.atari.q_network import QNetwork
 from collections import deque, namedtuple
 
 
-env = gym.envs.make("Breakout-v0")
+env = AtariEnvWrapper(gym.envs.make("Breakout-v0"))
 
 # Atari Actions: 0 (noop), 1 (fire), 2 (left) and 3 (right) are valid actions
 VALID_ACTIONS = [0, 1, 2, 3]
 
 class StateProcessor():
-    """
-    Processes a raw Atari iamges. Resizes it and converts it to grayscale.
-    """
-    def __init__(self):
-        # Build the Tensorflow graph
-        with tf.variable_scope("state_processor"):
-            self.input_state = tf.placeholder(shape=[210, 160, 3], dtype=tf.uint8)
-            self.output = tf.image.rgb_to_grayscale(self.input_state)
-            self.output = tf.image.crop_to_bounding_box(self.output, 34, 0, 160, 160)
-            self.output = tf.image.resize_images(
-                self.output, [84, 84], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-            self.output = tf.squeeze(self.output)
-
-    def process(self, sess, state):
-        """
-        Args:
-            sess: A Tensorflow session object
-            state: A [210, 160, 3] Atari RGB State
-
-        Returns:
-            A processed [84, 84, 1] state representing grayscale values.
-        """
-        return sess.run(self.output, { self.input_state: state })
+    def process(self, state):
+        return cv2.resize(state, (84, 84), interpolation=cv2.INTER_LINEAR)
 
 
 def make_epsilon_greedy_policy(estimator, nA):
@@ -145,7 +126,7 @@ def deep_q_learning(env,
     # Populate the replay memory with initial experience
     print("Populating replay memory...")
     state = env.reset()
-    state = state_processor.process(q_network.sess, state)
+    state = state_processor.process(state)
     state = np.stack([state] * 4, axis=2)
     for i in range(replay_memory_init_size):
         action_probs = policy(state, epsilons[total_t])
@@ -153,12 +134,14 @@ def deep_q_learning(env,
         one_hot_action = np.zeros(len(VALID_ACTIONS))
         one_hot_action[action] = 1
         next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-        next_state = state_processor.process(q_network.sess, next_state)
+        #next_state = state_processor.process(q_network.sess, next_state)
+        next_state = state_processor.process(next_state)
         next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
         replay_memory.append(Transition(state, one_hot_action, reward, next_state, done))
         if done:
             state = env.reset()
-            state = state_processor.process(q_network.sess, state)
+            #state = state_processor.process(q_network.sess, state)
+            state = state_processor.process(state)
             state = np.stack([state] * 4, axis=2)
         else:
             state = next_state
@@ -170,20 +153,19 @@ def deep_q_learning(env,
                       resume=True,
                       video_callable=lambda count: count % record_video_every == 0)
 
+    # Reset the environment
+    state = env.reset()
+    state = state_processor.process(state)
+    state = np.stack([state] * 4, axis=2)
+    loss = None
+
     for i_episode in range(num_episodes):
 
         # Save the current checkpoint
         q_network.save_model(i_episode)
 
-        # Reset the environment
-        state = env.reset()
-        state = state_processor.process(q_network.sess, state)
-        state = np.stack([state] * 4, axis=2)
-        loss = None
-
         # One step in the environment
         for t in itertools.count():
-
             # Epsilon for this time step
             epsilon = epsilons[min(total_t, epsilon_decay_steps-1)]
 
@@ -203,7 +185,8 @@ def deep_q_learning(env,
             one_hot_action = np.zeros(len(VALID_ACTIONS))
             one_hot_action[action] = 1
             next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-            next_state = state_processor.process(q_network.sess, next_state)
+            #next_state = state_processor.process(q_network.sess, next_state)
+            next_state = state_processor.process(next_state)
             next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
 
             # If our replay memory is full, pop the first element
@@ -237,7 +220,16 @@ def deep_q_learning(env,
             total_t += 1
 
             if done:
-                break
+                try:
+                    # Reset the environment
+                    state = env.reset()
+                    state = state_processor.process(state)
+                    state = np.stack([state] * 4, axis=2)
+                    loss = None
+
+                    break
+                except:
+                    pass
 
             state = next_state
 
