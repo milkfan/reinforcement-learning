@@ -30,6 +30,9 @@ class QNetwork():
         self.normalized_observation = self.observation / 255.0
         self.normalized_next_observation = self.next_observation / 255.0
 
+        self.single_state = tf.placeholder(tf.uint8, shape=[4, args.screen_dims[0], args.screen_dims[1], 1], name='single_state')
+        self.state_summary = tf.image_summary('state', self.single_state, max_images=4)
+
         num_conv_layers = len(args.conv_kernel_shapes)
         assert(num_conv_layers == len(args.conv_strides))
         num_dense_layers = len(args.dense_layer_shapes)
@@ -82,6 +85,7 @@ class QNetwork():
         # TODO: Turn double_dqn arg option back on later
         #self.loss = self.build_loss(args.error_clipping, num_actions, args.double_dqn)
         self.loss = self.build_loss(args.error_clipping, num_actions, False)
+        self.loss_summary = tf.scalar_summary('loss', self.loss)
 
         if (args.optimizer == 'rmsprop') and (args.gradient_clip <= 0):
             self.train_op = tf.train.RMSPropOptimizer(
@@ -98,8 +102,9 @@ class QNetwork():
         self.param_summaries = tf.merge_summary(param_hists)
 
         # start tf session
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.33333)  # avoid using all vram for GTX 970
-        self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+        # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.33333)  # avoid using all vram for GTX 970
+        # self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+        self.sess = tf.Session()
 
         # if args.watch:
         #     print("Loading Saved Network...")
@@ -336,4 +341,14 @@ class QNetwork():
 
     def record_params(self, step):
         summary_string = self.sess.run(self.param_summaries)
+        self.summary_writer.add_summary(summary_string, step)
+
+    def record_state(self, state, step):
+        #swapped = np.swapaxes(np.swapaxes(state, 0, 1), 0, 2)
+        rolled = np.rollaxis(state, 2, 0)
+        expanded = np.expand_dims(rolled, 3)
+        summary_string = self.sess.run(
+            self.state_summary,
+            feed_dict={self.single_state: expanded}
+        )
         self.summary_writer.add_summary(summary_string, step)

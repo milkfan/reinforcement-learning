@@ -12,7 +12,9 @@ if "../" not in sys.path:
   sys.path.append("../")
 
 from lib import plotting
-from lib.atari.helpers import AtariEnvWrapper
+from lib.atari.helpers import (
+    AtariEnvWrapper, atari_make_next_state, atari_make_initial_state
+)
 from lib.atari.q_network import QNetwork
 from collections import deque, namedtuple
 
@@ -127,22 +129,20 @@ def deep_q_learning(env,
     print("Populating replay memory...")
     state = env.reset()
     state = state_processor.process(state)
-    state = np.stack([state] * 4, axis=2)
+    state = atari_make_initial_state(state)
     for i in range(replay_memory_init_size):
         action_probs = policy(state, epsilons[total_t])
         action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
         one_hot_action = np.zeros(len(VALID_ACTIONS))
         one_hot_action[action] = 1
         next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-        #next_state = state_processor.process(q_network.sess, next_state)
         next_state = state_processor.process(next_state)
-        next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
+        next_state = atari_make_next_state(state, next_state)
         replay_memory.append(Transition(state, one_hot_action, reward, next_state, done))
         if done:
             state = env.reset()
-            #state = state_processor.process(q_network.sess, state)
             state = state_processor.process(state)
-            state = np.stack([state] * 4, axis=2)
+            state = atari_make_initial_state(state)
         else:
             state = next_state
 
@@ -156,13 +156,14 @@ def deep_q_learning(env,
     # Reset the environment
     state = env.reset()
     state = state_processor.process(state)
-    state = np.stack([state] * 4, axis=2)
+    state = atari_make_initial_state(state)
     loss = None
 
     for i_episode in range(num_episodes):
 
         # Save the current checkpoint
         q_network.save_model(i_episode)
+        q_network.record_params(total_t)
 
         # One step in the environment
         for t in itertools.count():
@@ -185,9 +186,8 @@ def deep_q_learning(env,
             one_hot_action = np.zeros(len(VALID_ACTIONS))
             one_hot_action[action] = 1
             next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-            #next_state = state_processor.process(q_network.sess, next_state)
             next_state = state_processor.process(next_state)
-            next_state = np.append(state[:,:,1:], np.expand_dims(next_state, 2), axis=2)
+            next_state = atari_make_next_state(state, next_state)
 
             # If our replay memory is full, pop the first element
             if len(replay_memory) == replay_memory_size:
@@ -217,6 +217,9 @@ def deep_q_learning(env,
                     done_batch
                 )
 
+                if total_t % (10 * train_every) == 0:
+                    q_network.record_state(states_batch[0], total_t)
+
             total_t += 1
 
             if done:
@@ -224,7 +227,7 @@ def deep_q_learning(env,
                     # Reset the environment
                     state = env.reset()
                     state = state_processor.process(state)
-                    state = np.stack([state] * 4, axis=2)
+                    state = atari_make_initial_state(state)
                     loss = None
 
                     break
@@ -303,13 +306,13 @@ def main():
                                     state_processor=state_processor,
                                     experiment_dir=experiment_dir,
                                     num_episodes=100000,
-                                    replay_memory_size=500000,
+                                    replay_memory_size=1000000,
                                     replay_memory_init_size=50000,
                                     update_target_estimator_every=10000,
                                     train_every=4,
                                     epsilon_start=1.0,
                                     epsilon_end=0.1,
-                                    epsilon_decay_steps=500000,
+                                    epsilon_decay_steps=1000000,
                                     discount_factor=0.99,
                                     batch_size=32):
 
