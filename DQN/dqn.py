@@ -29,7 +29,7 @@ class StateProcessor():
         return cv2.resize(state, (84, 84), interpolation=cv2.INTER_LINEAR)
 
 
-def make_epsilon_greedy_policy(estimator, nA):
+def make_epsilon_greedy_policy(q_network, num_actions):
     """
     Creates an epsilon-greedy policy based on a given Q-function approximator and epsilon.
 
@@ -42,12 +42,20 @@ def make_epsilon_greedy_policy(estimator, nA):
         the probabilities for each action in the form of a numpy array of length nA.
 
     """
-    def policy_fn(observation, epsilon):
-        A = np.ones(nA, dtype=float) * epsilon / nA
-        q_values = estimator.inference(np.expand_dims(observation, 0))[0]
-        best_action = np.argmax(q_values)
-        A[best_action] += (1.0 - epsilon)
-        return A
+    # def policy_fn(observation, epsilon, step):
+    #     A = np.ones(nA, dtype=float) * epsilon / nA
+    #     q_values = estimator.inference(np.expand_dims(observation, 0), step)[0]
+    #     best_action = np.argmax(q_values)
+    #     A[best_action] += (1.0 - epsilon)
+    #     return A
+    # return policy_fn
+
+    def policy_fn(state, epsilon, step):
+        if random.random() >= epsilon:
+            q_values = q_network.inference(np.expand_dims(state, 0), step)
+            return np.argmax(q_values)
+        else:
+            return random.randrange(num_actions)
     return policy_fn
 
 
@@ -131,8 +139,9 @@ def deep_q_learning(env,
     state = state_processor.process(state)
     state = atari_make_initial_state(state)
     for i in range(replay_memory_init_size):
-        action_probs = policy(state, epsilons[total_t])
-        action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+        #action_probs = policy(state, epsilons[total_t], total_t)
+        #action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+        action = policy(state, epsilons[total_t], total_t)
         one_hot_action = np.zeros(len(VALID_ACTIONS))
         one_hot_action[action] = 1
         next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
@@ -181,8 +190,9 @@ def deep_q_learning(env,
             sys.stdout.flush()
 
             # Take a step
-            action_probs = policy(state, epsilon)
-            action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            # action_probs = policy(state, epsilon, total_t)
+            # action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            action = policy(state, epsilon, total_t)
             one_hot_action = np.zeros(len(VALID_ACTIONS))
             one_hot_action[action] = 1
             next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
@@ -195,7 +205,7 @@ def deep_q_learning(env,
 
             # Save transition to replay memory
             replay_memory.append(
-                Transition(state, one_hot_action, reward, next_state, done)
+                Transition(state, one_hot_action, reward, next_state, int(done))
             )
 
             # Update statistics

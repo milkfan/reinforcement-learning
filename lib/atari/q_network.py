@@ -82,6 +82,11 @@ class QNetwork():
         self.policy_q_layer = last_layers[0]
         self.target_q_layer = last_layers[1]
 
+        self.policy_q_summary = tf.histogram_summary(
+            'policy_action_q',
+            self.policy_q_layer
+        )
+
         # TODO: Turn double_dqn arg option back on later
         #self.loss = self.build_loss(args.error_clipping, num_actions, args.double_dqn)
         self.loss = self.build_loss(args.error_clipping, num_actions, False)
@@ -225,14 +230,19 @@ class QNetwork():
 
 
 
-    def inference(self, obs):
+    def inference(self, obs, step):
         ''' Get state-action value predictions for an observation
 
         Args:
             observation: the observation
         '''
 
-        return np.squeeze(self.sess.run(self.policy_q_layer, feed_dict={self.observation:obs}))
+        actions, summary_string = self.sess.run(
+            [self.policy_q_layer, self.policy_q_summary],
+            feed_dict={self.observation:obs}
+        )
+        self.summary_writer.add_summary(summary_string, step)
+        return np.squeeze(actions)
 
 
     def build_loss(self, error_clip, num_actions, double_dqn):
@@ -274,8 +284,15 @@ class QNetwork():
             o2: succeeding observations
         '''
 
-        loss = self.sess.run([self.train_op, self.loss],
-            feed_dict={self.observation:o1, self.actions:a, self.rewards:r, self.next_observation:o2, self.terminals:t})[1]
+        loss = self.sess.run(
+            [self.train_op, self.loss],
+            feed_dict={
+                self.observation:o1,
+                self.actions:a,
+                self.rewards:r,
+                self.next_observation:o2,
+                self.terminals:t
+            })[1]
 
         self.total_updates += 1
         if self.total_updates % self.target_update_frequency == 0:
@@ -342,6 +359,7 @@ class QNetwork():
     def record_params(self, step):
         summary_string = self.sess.run(self.param_summaries)
         self.summary_writer.add_summary(summary_string, step)
+
 
     def record_state(self, state, step):
         #swapped = np.swapaxes(np.swapaxes(state, 0, 1), 0, 2)
