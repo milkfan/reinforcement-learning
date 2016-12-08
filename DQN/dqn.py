@@ -19,7 +19,7 @@ from lib.atari.q_network import QNetwork
 from collections import deque, namedtuple
 
 
-env = AtariEnvWrapper(gym.envs.make("Breakout-v0"))
+env = AtariEnvWrapper(gym.envs.make("BreakoutDeterministic-v0"))
 
 # Atari Actions: 0 (noop), 1 (fire), 2 (left) and 3 (right) are valid actions
 VALID_ACTIONS = [0, 1, 2, 3]
