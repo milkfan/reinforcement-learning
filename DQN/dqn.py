@@ -16,6 +16,7 @@ from lib.atari.helpers import (
     AtariEnvWrapper, atari_make_next_state, atari_make_initial_state
 )
 from lib.atari.q_network import QNetwork
+from lib.atari.memory import Memory
 from collections import deque, namedtuple
 
 
@@ -52,27 +53,26 @@ def make_epsilon_greedy_policy(q_network, num_actions):
 
     def policy_fn(state, epsilon, step):
         if random.random() >= epsilon:
-            q_values = q_network.inference(np.expand_dims(state, 0), step)
+            #q_values = q_network.inference(np.expand_dims(state, 0), step)
+            q_values = q_network.inference(state, step)
             return np.argmax(q_values)
         else:
             return random.randrange(num_actions)
     return policy_fn
 
 
-def deep_q_learning(env,
+def deep_q_learning(args,
+                    env,
                     q_network,
                     state_processor,
                     num_episodes,
                     experiment_dir,
-                    replay_memory_size=500000,
-                    replay_memory_init_size=50000,
-                    update_target_estimator_every=10000,
+                    memory,
                     train_every=4,
                     discount_factor=0.99,
                     epsilon_start=1.0,
                     epsilon_end=0.1,
                     epsilon_decay_steps=500000,
-                    batch_size=32,
                     record_video_every=50):
     """
     Q-Learning algorithm for fff-policy TD control using Function Approximation.
@@ -85,18 +85,13 @@ def deep_q_learning(env,
         state_processor: A StateProcessor object
         num_episodes: Number of episodes to run for
         experiment_dir: Directory to save Tensorflow summaries in
-        replay_memory_size: Size of the replay memory
-        replay_memory_init_size: Number of random experiences to sampel when initializing
-          the reply memory.
-        update_target_estimator_every: Copy parameters from the Q estimator to the
-          target estimator every N steps
+        memory: Replay memory object
         train_every: How often to train Q network
         discount_factor: Lambda time discount factor
         epsilon_start: Chance to sample a random action when taking an action.
           Epsilon is decayed over time and this is the start value
         epsilon_end: The final minimum value of epsilon after decaying is done
         epsilon_decay_steps: Number of steps to decay epsilon over
-        batch_size: Size of batches to sample from the replay memory
         record_video_every: Record a video every N episodes
 
     Returns:
@@ -106,7 +101,8 @@ def deep_q_learning(env,
     Transition = namedtuple("Transition", ["state", "action", "reward", "next_state", "done"])
 
     # The replay memory
-    replay_memory = []
+    #replay_memory = []
+    memory = Memory(args, len(VALID_ACTIONS))
 
     # Keeps track of useful statistics
     stats = plotting.EpisodeStats(
@@ -135,27 +131,35 @@ def deep_q_learning(env,
 
     # Populate the replay memory with initial experience
     print("Populating replay memory...")
-    state = env.reset()
-    state = state_processor.process(state)
-    state = atari_make_initial_state(state)
-    for i in range(replay_memory_init_size):
+    frame = env.reset()
+    frame = state_processor.process(frame)
+    #state = atari_make_initial_state(state)
+    memory.add(frame, 0, 0, int(False))
+    #for i in range(args.initial_memory_length):
+    for t in itertools.count():
         #action_probs = policy(state, epsilons[total_t], total_t)
         #action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+        state = memory.get_current_state()
         action = policy(state, epsilons[total_t], total_t)
         one_hot_action = np.zeros(len(VALID_ACTIONS))
         one_hot_action[action] = 1
-        next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-        next_state = state_processor.process(next_state)
-        next_state = atari_make_next_state(state, next_state)
-        replay_memory.append(Transition(state, one_hot_action, reward, next_state, done))
-        if done:
-            state = env.reset()
-            state = state_processor.process(state)
-            state = atari_make_initial_state(state)
-        else:
-            state = next_state
+        next_frame, reward, done, _ = env.step(VALID_ACTIONS[action])
+        next_frame = state_processor.process(next_frame)
+        #next_state = atari_make_next_state(state, next_state)
+        #replay_memory.append(Transition(state, one_hot_action, reward, next_state, done))
+        memory.add(next_frame, action, reward, int(done))
 
         total_t += 1
+
+        # Ensure that we finish current episode once we've exceeded the initial
+        # memory length
+        if t >= args.initial_memory_length and done:
+            break
+        elif done:
+            frame = env.reset()
+            frame = state_processor.process(frame)
+            #state = atari_make_initial_state(state)
+            memory.add(frame, 0, 0, int(False))
 
     # Record videos
     env.monitor.start(monitor_path,
@@ -163,9 +167,10 @@ def deep_q_learning(env,
                       video_callable=lambda count: count % record_video_every == 0)
 
     # Reset the environment
-    state = env.reset()
-    state = state_processor.process(state)
-    state = atari_make_initial_state(state)
+    frame = env.reset()
+    frame = state_processor.process(frame)
+    #state = atari_make_initial_state(state)
+    memory.add(frame, 0, 0, int(False))
     loss = None
 
     for i_episode in range(num_episodes):
@@ -192,21 +197,23 @@ def deep_q_learning(env,
             # Take a step
             # action_probs = policy(state, epsilon, total_t)
             # action = np.random.choice(np.arange(len(action_probs)), p=action_probs)
+            state = memory.get_current_state()
             action = policy(state, epsilon, total_t)
             one_hot_action = np.zeros(len(VALID_ACTIONS))
             one_hot_action[action] = 1
-            next_state, reward, done, _ = env.step(VALID_ACTIONS[action])
-            next_state = state_processor.process(next_state)
-            next_state = atari_make_next_state(state, next_state)
+            next_frame, reward, done, _ = env.step(VALID_ACTIONS[action])
+            next_frame = state_processor.process(next_frame)
+            #next_state = atari_make_next_state(state, next_state)
 
-            # If our replay memory is full, pop the first element
-            if len(replay_memory) == replay_memory_size:
-                replay_memory.pop(0)
+            # # If our replay memory is full, pop the first element
+            # if len(replay_memory) == replay_memory_size:
+            #     replay_memory.pop(0)
 
             # Save transition to replay memory
-            replay_memory.append(
-                Transition(state, one_hot_action, reward, next_state, int(done))
-            )
+            # replay_memory.append(
+            #     Transition(state, one_hot_action, reward, next_state, int(done))
+            # )
+            memory.add(next_frame, action, reward, int(done))
 
             # Update statistics
             stats.episode_rewards[i_episode] += reward
@@ -214,37 +221,39 @@ def deep_q_learning(env,
 
             if total_t % train_every == 0:
                 # Sample a minibatch from the replay memory
-                samples = random.sample(replay_memory, batch_size)
-                states_batch, actions_batch, rewards_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
+                #samples = random.sample(replay_memory, args.batch_size)
+                #states_batch, actions_batch, rewards_batch, next_states_batch, done_batch = map(np.array, zip(*samples))
+                states, actions, rewards, next_states, dones = memory.get_batch()
 
                 # Perform gradient descent update
-                states_batch = np.array(states_batch)
+                #states_batch = np.array(states_batch)
                 loss = q_network.train(
-                    states_batch,
-                    actions_batch,
-                    rewards_batch,
-                    next_states_batch,
-                    done_batch
+                    states,
+                    actions,
+                    rewards,
+                    next_states,
+                    dones
                 )
 
                 if total_t % (10 * train_every) == 0:
-                    q_network.record_state(states_batch[0], total_t)
+                    q_network.record_state(states[0], total_t)
 
             total_t += 1
 
             if done:
                 try:
                     # Reset the environment
-                    state = env.reset()
-                    state = state_processor.process(state)
-                    state = atari_make_initial_state(state)
+                    frame = env.reset()
+                    frame = state_processor.process(frame)
+                    #state = atari_make_initial_state(state)
+                    memory.add(frame, 0, 0, int(False))
                     loss = None
 
                     break
                 except:
                     pass
 
-            state = next_state
+            #state = next_state
 
         # Add summaries to tensorboard
         episode_summary = tf.Summary()
@@ -284,8 +293,12 @@ def main():
     # set gradient clipping to 0 or less to disable.  Currently only works with graves_rmsprop.
     parser.add_argument("--gradient_clip", type=float, help="clip gradients to have the provided L2-norm", default=0)
     parser.add_argument("--target_update_frequency", type=int, help="number of policy network updates between target network updates", default=10000)
+    parser.add_argument("--initial_memory_length", type=int,
+        help="number of randomly-generated steps to initially fill replay memory", default=50000)
+    parser.add_argument("--memory_capacity", type=int, help="max number of steps to store in replay memory", default=1000000)
+    parser.add_argument("--batch_size", type=int, help="number of transitions sampled from memory during learning", default=32)
 
-    #parser.add_argument("--double_dqn", help="use double q-learning algorithm in error target calculation", action='store_true')
+    parser.add_argument("--double_dqn", help="use double q-learning algorithm in error target calculation", default=False)
 
     args = parser.parse_args()
 
@@ -310,21 +323,20 @@ def main():
     state_processor = StateProcessor()
 
     q_network = QNetwork(args, len(VALID_ACTIONS), experiment_dir)
+    memory = Memory(args, len(VALID_ACTIONS))
 
-    for t, stats in deep_q_learning(env,
+    for t, stats in deep_q_learning(args=args,
+                                    env=env,
                                     q_network=q_network,
                                     state_processor=state_processor,
                                     experiment_dir=experiment_dir,
                                     num_episodes=100000,
-                                    replay_memory_size=1000000,
-                                    replay_memory_init_size=50000,
-                                    update_target_estimator_every=10000,
+                                    memory=memory,
                                     train_every=4,
                                     epsilon_start=1.0,
                                     epsilon_end=0.1,
                                     epsilon_decay_steps=1000000,
-                                    discount_factor=0.99,
-                                    batch_size=32):
+                                    discount_factor=0.99):
 
         print("\nEpisode Reward: {}".format(stats.episode_rewards[-1]))
 

@@ -87,9 +87,7 @@ class QNetwork():
             self.policy_q_layer
         )
 
-        # TODO: Turn double_dqn arg option back on later
-        #self.loss = self.build_loss(args.error_clipping, num_actions, args.double_dqn)
-        self.loss = self.build_loss(args.error_clipping, num_actions, False)
+        self.loss = self.build_loss(args.error_clipping, num_actions, args.double_dqn)
         self.loss_summary = tf.scalar_summary('loss', self.loss)
 
         if (args.optimizer == 'rmsprop') and (args.gradient_clip <= 0):
