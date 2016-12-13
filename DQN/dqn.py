@@ -46,6 +46,26 @@ def make_epsilon_greedy_policy(q_network, num_actions):
     return policy_fn
 
 
+def checkGameOver(emulator, memory):
+    if emulator.isGameOver():
+        initial_state = emulator.reset()
+        for experience in initial_state:
+            memory.add(experience[0], experience[1], experience[2], experience[3])
+
+
+def run_random_exploration(args, emulator, memory):
+    total_t = 0
+    for step in range(args.random_exploration_length):
+        state, action, reward, terminal, raw_reward = emulator.run_step(
+            random.randrange(emulator.num_actions)
+        )
+        memory.add(state, action, reward, terminal)
+        checkGameOver(emulator, memory)
+        total_t += 1
+
+    return total_t
+
+
 def deep_q_learning(args,
                     emulator,
                     q_network,
@@ -101,8 +121,6 @@ def deep_q_learning(args,
     if not os.path.exists(monitor_path):
         os.makedirs(monitor_path)
 
-    total_t = 0
-
     # The epsilon decay schedule
     epsilons = np.linspace(epsilon_start, epsilon_end, epsilon_decay_steps)
 
@@ -114,29 +132,7 @@ def deep_q_learning(args,
 
     # Populate the replay memory with initial experience
     print("Populating replay memory...")
-    initial_state = emulator.reset()
-    for experience in initial_state:
-        memory.add(experience[0], experience[1], experience[2], experience[3])
-
-    for t in itertools.count():
-        state = memory.get_current_state()
-        action = policy(state, epsilons[total_t], total_t)
-        one_hot_action = np.zeros(emulator.num_actions)
-        one_hot_action[action] = 1
-        state, action, reward, terminal, raw_reward = emulator.run_step(action)
-        memory.add(state, action, reward, terminal)
-
-        total_t += 1
-
-        # Ensure that we finish current episode once we've exceeded the initial
-        # memory length
-        if t >= args.initial_memory_length and emulator.isGameOver():
-            break
-        elif emulator.isGameOver():
-            initial_state = emulator.reset()
-            for experience in initial_state:
-                memory.add(experience[0], experience[1], experience[2], experience[3])
-
+    total_t = run_random_exploration(args, emulator, memory)
 
     # # Record videos
     # env.monitor.start(monitor_path,
@@ -172,8 +168,6 @@ def deep_q_learning(args,
             # Take a step
             state = memory.get_current_state()
             action = policy(state, epsilon, total_t)
-            one_hot_action = np.zeros(emulator.num_actions)
-            one_hot_action[action] = 1
             state, action, reward, terminal, raw_reward = emulator.run_step(action)
             memory.add(state, action, reward, terminal)
 
@@ -239,6 +233,9 @@ def main():
     parser.add_argument("--reward_processing", type=str, help="method to process rewards", choices=('clip', 'none'), default='clip')
     parser.add_argument("--frame_skip", type=int, help="number of frames to repeat chosen action", default=4)
     parser.add_argument("--max_start_wait", type=int, help="max number of frames to wait for initial state", default=30)
+
+    parser.add_argument("--random_exploration_length", type=int,
+        help="number of randomly-generated experiences to initially fill experience memory", default=50000)
 
     # must set network_architecture to custom in order use custom architecture
     parser.add_argument("--conv_kernel_shapes", type=tuple,
