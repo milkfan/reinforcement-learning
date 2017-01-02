@@ -15,7 +15,8 @@ from lib.atari import helpers as atari_helpers
 from lib.atari.state_processor import StateProcessor
 from collections import deque, namedtuple
 
-env = gym.envs.make("Breakout-v0")
+#env = gym.envs.make("Breakout-v0")
+env = gym.envs.make("BreakoutDeterministic-v3")
 env = atari_helpers.AtariEnvWrapper(env)
 
 # Atari Actions: 0 (noop), 1 (fire), 2 (left) and 3 (right) are valid actions
@@ -76,15 +77,16 @@ class Estimator():
         self.loss = tf.reduce_mean(self.losses)
 
         # Optimizer Parameters from original paper
-        self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
-        self.train_op = tf.contrib.layers.optimize_loss(
-            loss=self.loss,
-            global_step=tf.contrib.framework.get_global_step(),
-            learning_rate=0.00025,
-            optimizer=self.optimizer,
-            clip_gradients=5.0,
-            summaries=tf.contrib.layers.optimizers.OPTIMIZER_SUMMARIES
-        )
+        #self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
+        self.train_op, _ = self.graves_rmsprop_optimizer(self.loss, 0.00025, 0.95, 0.01, 1)
+        # self.train_op = tf.contrib.layers.optimize_loss(
+        #     loss=self.loss,
+        #     global_step=tf.contrib.framework.get_global_step(),
+        #     learning_rate=0.00025,
+        #     optimizer=self.optimizer,
+        #     clip_gradients=5.0,
+        #     summaries=tf.contrib.layers.optimizers.OPTIMIZER_SUMMARIES
+        # )
 
         # Summaries for Tensorboard
         tf.histogram_summary("loss_hist", self.losses),
@@ -100,6 +102,46 @@ class Estimator():
         sumaries = [s for s in summary_ops if tf.get_variable_scope().name in s.name]
         self.summaries = tf.merge_summary(sumaries)
 
+    def graves_rmsprop_optimizer(self, loss, learning_rate, rmsprop_decay, rmsprop_constant, gradient_clip):
+        with tf.name_scope('rmsprop'):
+            optimizer = None
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+
+            grads_and_vars = optimizer.compute_gradients(loss)
+
+            grads = []
+            params = []
+            for p in grads_and_vars:
+                if p[0] == None:
+                    continue
+                grads.append(p[0])
+                params.append(p[1])
+            #grads = [gv[0] for gv in grads_and_vars]
+            #params = [gv[1] for gv in grads_and_vars]
+            if gradient_clip > 0:
+                grads = tf.clip_by_global_norm(grads, gradient_clip)[0]
+
+            square_grads = [tf.square(grad) for grad in grads]
+
+            avg_grads = [tf.Variable(tf.zeros(var.get_shape()))
+                        for var in params]
+            avg_square_grads = [tf.Variable(
+                tf.zeros(var.get_shape())) for var in params]
+
+            update_avg_grads = [grad_pair[0].assign((rmsprop_decay * grad_pair[0]) + tf.scalar_mul((1 - rmsprop_decay), grad_pair[1]))
+                                for grad_pair in zip(avg_grads, grads)]
+            update_avg_square_grads = [grad_pair[0].assign((rmsprop_decay * grad_pair[0]) + ((1 - rmsprop_decay) * tf.square(grad_pair[1])))
+                                    for grad_pair in zip(avg_square_grads, grads)]
+            avg_grad_updates = update_avg_grads + update_avg_square_grads
+
+            rms = [tf.sqrt(avg_grad_pair[1] - tf.square(avg_grad_pair[0]) + rmsprop_constant)
+                for avg_grad_pair in zip(avg_grads, avg_square_grads)]
+
+            rms_updates = [grad_rms_pair[0] / grad_rms_pair[1]
+                        for grad_rms_pair in zip(grads, rms)]
+            train = optimizer.apply_gradients(zip(rms_updates, params))
+
+            return tf.group(train, tf.group(*avg_grad_updates)), grads_and_vars
 
     def predict(self, sess, s):
         """
@@ -291,15 +333,16 @@ def deep_q_learning(sess,
                       resume=True,
                       video_callable=lambda count: count % record_video_every == 0)
 
+    # Initialize the environment
+    state = env.reset()
+    state = state_processor.process(state, sess)
+    state = atari_helpers.atari_make_initial_state(state)
+
     for i_episode in range(num_episodes):
 
         # Save the current checkpoint
         saver.save(tf.get_default_session(), checkpoint_path)
 
-        # Reset the environment
-        state = env.reset()
-        state = state_processor.process(state, sess)
-        state = atari_helpers.atari_make_initial_state(state)
         loss = None
 
         # One step in the environment
@@ -360,7 +403,14 @@ def deep_q_learning(sess,
                 summary_writer.add_summary(summaries, total_t)
 
             if done:
-                break
+                try:
+                    state = env.reset()
+                    state = state_processor.process(state, sess)
+                    state = atari_helpers.atari_make_initial_state(state)
+                    break
+                except gym.error.Error:
+                    # Just lost a life. Keep playing!
+                    pass
 
             state = next_state
 
