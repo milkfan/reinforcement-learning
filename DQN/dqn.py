@@ -74,7 +74,8 @@ class Estimator():
 
         # Calcualte the loss
         self.losses = tf.squared_difference(self.y_pl, self.action_predictions)
-        self.loss = tf.reduce_mean(self.losses)
+        #self.loss = tf.reduce_mean(self.losses)
+        self.loss = tf.reduce_max(self.losses)
 
         # Optimizer Parameters from original paper
         #self.optimizer = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6)
